@@ -2,8 +2,13 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <assert.h>
+#include <memory.h>
+#include <string.h>
+#include <errno.h>
 
 #define BM_STACK_CAPACITY 1024
+#define BM_PROGRAM_CAPACITY 1024
+#define BM_EXECUTION_LIMIT 100
 
 typedef int64_t Word;
 
@@ -12,7 +17,9 @@ typedef enum {
     ERR_STACK_OVERFLOW,
     ERR_STACK_UNDERFLOW,
     ERR_ILLEGAL_INST,
+    ERR_ILLEGAL_OPERAND,
     ERR_DIV_BY_ZERO,
+    ERR_ILLEGAL_INST_ACCESS,
 } Err;
 
 const char *errAsCStr(Err trap) {
@@ -21,37 +28,40 @@ const char *errAsCStr(Err trap) {
         case ERR_STACK_OVERFLOW: return "ERR_STACK_OVERFLOW";
         case ERR_STACK_UNDERFLOW: return "ERR_STACK_UNDERFLOW";
         case ERR_ILLEGAL_INST: return "ERR_ILLEGAL_INST";
+        case ERR_ILLEGAL_OPERAND: return "ERR_ILLEGAL_OPERAND";
         case ERR_DIV_BY_ZERO: return "ERR_DIV_BY_ZERO";
+        case ERR_ILLEGAL_INST_ACCESS: return "ERR_ILLEGAL_INST_ACCESS";
         default: assert(0 && "errAsCStr: Unreachable");
     }
 }
 
-typedef struct {
-    Word stack[BM_STACK_CAPACITY];
-    size_t stackSize;
-    Word ip;
-    int halt;
-} Bm;
-
 typedef enum {
     INST_PUSH,
+    INST_DUP,
     INST_PLUS,
     INST_MINUS,
     INST_MULT,
     INST_DIV,
     INST_JMP,
+    INST_JMP_IF,
+    INST_EQ,
     INST_HALT,
+    INST_PRINT_DEBUG,
 } InstType;
 
 const char *instTypeAsCStr(InstType type) {
     switch (type) {
         case INST_PUSH: return "INST_PUSH";
+        case INST_DUP: return "INST_DUP";
         case INST_PLUS: return "INST_PLUS";
         case INST_MINUS: return "INST_MINUS";
         case INST_MULT: return "INST_MULT";
         case INST_DIV: return "INST_DIV";
         case INST_JMP: return "INST_JMP";
+        case INST_JMP_IF: return "INST_JMP_IF";
+        case INST_EQ: return "INST_EQ";
         case INST_HALT: return "INST_HALT";
+        case INST_PRINT_DEBUG: return "INST_PRINT_DEBUG";
         default: assert(0 && "instTypeAsCStr: Unreachable");
     }
 }
@@ -61,15 +71,36 @@ typedef struct {
     Word operand;
 } Inst;
 
+typedef struct {
+    Word stack[BM_STACK_CAPACITY];
+    Word stackSize;
+
+    Inst program[BM_PROGRAM_CAPACITY];
+    Word programSize;
+    Word ip;
+
+    int halt;
+} Bm;
+
 #define MAKE_INST_PUSH(value) {.type = INST_PUSH, .operand = (value)}
+#define MAKE_INST_DUP(addr) {.type = INST_DUP, .operand = (addr)}
 #define MAKE_INST_PLUS {.type = INST_PLUS}
 #define MAKE_INST_MINUS {.type = INST_MINUS}
 #define MAKE_INST_MULT {.type = INST_MULT}
 #define MAKE_INST_DIV {.type = INST_DIV}
 #define MAKE_INST_JMP(addr) {.type = INST_JMP, .operand = (addr)}
+#define MAKE_INST_JMP_IF(addr) {.type = INST_JMP_IF, .operand = (addr)}
+#define MAKE_INST_EQ {.type = INST_EQ}
 #define MAKE_INST_HALT {.type = INST_HALT}
+#define MAKE_INST_PRINT_DEBUG {.type = INST_PRINT_DEBUG}
 
-Err bmExecuteInst(Bm *bm, Inst inst) {
+Err bmExecuteInst(Bm *bm) {
+    if (bm->ip < 0 || bm->ip >= bm->programSize) {
+        return ERR_ILLEGAL_INST_ACCESS;
+    }
+
+    Inst inst = bm->program[bm->ip];
+
     switch (inst.type) {
         case INST_PUSH:
             if (bm->stackSize >= BM_STACK_CAPACITY) {
@@ -77,6 +108,26 @@ Err bmExecuteInst(Bm *bm, Inst inst) {
             }
             bm->stack[bm->stackSize++] = inst.operand;
             bm->ip += 1;
+            break;
+
+        case INST_DUP:
+            if (bm->stackSize >= BM_STACK_CAPACITY) {
+                return ERR_STACK_OVERFLOW;
+            }
+
+            if (bm->stackSize - inst.operand <= 0) {
+                return ERR_STACK_UNDERFLOW;
+            }
+
+            if (inst.operand < 0) {
+                return ERR_ILLEGAL_OPERAND;
+            }
+
+            bm->stack[bm->stackSize] = bm->stack[bm->stackSize - 1 - inst.operand];
+
+            bm->stackSize += 1;
+            bm->ip += 1;
+            
             break;
 
         case INST_PLUS:
@@ -121,7 +172,44 @@ Err bmExecuteInst(Bm *bm, Inst inst) {
             break;
 
         case INST_JMP:
-            if (bm)
+            bm->ip = inst.operand;
+            break;
+
+        case INST_JMP_IF:
+            if (bm->stackSize < 1) {
+                return ERR_STACK_UNDERFLOW;
+            }
+
+            if (bm->stack[bm->stackSize - 1]) {
+                bm->stackSize -= 1;
+                bm->ip = inst.operand;
+            } else {
+                bm->ip += 1;
+            }
+
+            break;
+
+        case INST_EQ:
+            if (bm->stackSize < 2) {
+                return ERR_STACK_UNDERFLOW;
+            }
+            bm->stack[bm->stackSize - 2] = bm->stack[bm->stackSize - 1] == bm->stack[bm->stackSize - 2];
+            bm->stackSize -= 1;
+            bm->ip += 1;
+            break;
+
+        case INST_HALT:
+            bm->halt = 1;
+            break;
+
+        case INST_PRINT_DEBUG:
+            if (bm->stackSize < 1) {
+                return ERR_STACK_UNDERFLOW;
+            }
+            printf("%ld", bm->stack[bm->stackSize - 1]);
+            bm->stackSize -= 1;
+            bm->ip += 1;
+            break;
 
         default:
             return ERR_ILLEGAL_INST;
@@ -130,10 +218,10 @@ Err bmExecuteInst(Bm *bm, Inst inst) {
     return ERR_OK;
 }
 
-void bmDump(FILE *stream, const Bm *bm) {
+void bmDumpStack(FILE *stream, const Bm *bm) {
     fprintf(stream, "Stack:\n");
     if (bm->stackSize > 0) {
-        for (size_t i = 0; i < bm->stackSize; i++) {
+        for (Word i = 0; i < bm->stackSize; i++) {
             fprintf(stream, "  %ld\n", bm->stack[i]);
         }
     } else {
@@ -143,24 +231,54 @@ void bmDump(FILE *stream, const Bm *bm) {
 
 #define ARRAY_SIZE(xs) (sizeof(xs) / sizeof((xs)[0]))
 
+void bmLoadProgramFromMemory(Bm *bm, Inst *program, size_t programSize) {
+    assert(programSize < BM_PROGRAM_CAPACITY);
+    memcpy(bm->program, program, sizeof(program[0]) * programSize);
+    bm->programSize = programSize;
+}
+
+void bmSaveProgramToFile(Inst *program, size_t programSize, const char *filePath) {
+    FILE *f = fopen(filePath, "wb");
+    if (f == NULL) {
+        fprintf(stderr, "ERROR: Could not open file `%s`: %s\n", filePath, strerror(errno));
+    }
+
+    fwrite(program, sizeof(program[0]), programSize, f);
+
+    if (ferror(f)) {
+        fprintf(stderr, "ERROR: Could no write to file `%s`: %s\n", filePath, strerror(errno));
+    }
+
+    fclose(f);
+}
+
 Bm bm = {0};
 Inst program[] = {
-    MAKE_INST_PUSH(12),
-    MAKE_INST_PUSH(21),
+    MAKE_INST_PUSH(0),
+    MAKE_INST_PUSH(1),
+    MAKE_INST_DUP(1),
+    MAKE_INST_DUP(1),
     MAKE_INST_PLUS,
+    MAKE_INST_JMP(2),
 };
 
 int main() {
-    bmDump(stdout, &bm);
+    bmSaveProgramToFile(program, ARRAY_SIZE(program), "fib.bm");
+}
 
-    while (!bm.halt) {
-        printf("%s\n", instTypeAsCStr(program[bm.ip].type));
-        Err trap = bmExecuteInst(&bm, program[bm.ip]);
+int main2() {
+    bmLoadProgramFromMemory(&bm, program, ARRAY_SIZE(program));
+    bmDumpStack(stdout, &bm);
+
+    for (int i = 0; i < BM_EXECUTION_LIMIT && !bm.halt; ++i) {
+        Err trap = bmExecuteInst(&bm);
         if (trap != ERR_OK) {
             fprintf(stderr, "Error: %s\n", errAsCStr(trap));
             exit(1);
         }
     }
+    
+    bmDumpStack(stdout, &bm);
 
     return 0;
 }
