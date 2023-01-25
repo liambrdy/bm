@@ -36,6 +36,7 @@ const char *errAsCStr(Err trap) {
 }
 
 typedef enum {
+    INST_NOP = 0,
     INST_PUSH,
     INST_DUP,
     INST_PLUS,
@@ -51,6 +52,7 @@ typedef enum {
 
 const char *instTypeAsCStr(InstType type) {
     switch (type) {
+        case INST_NOP: return "INST_NOP";
         case INST_PUSH: return "INST_PUSH";
         case INST_DUP: return "INST_DUP";
         case INST_PLUS: return "INST_PLUS";
@@ -79,6 +81,7 @@ typedef struct {
     Word programSize;
     Word ip;
 
+
     int halt;
 } Bm;
 
@@ -102,6 +105,10 @@ Err bmExecuteInst(Bm *bm) {
     Inst inst = bm->program[bm->ip];
 
     switch (inst.type) {
+        case INST_NOP:
+            bm->ip += 1;
+            break;
+
         case INST_PUSH:
             if (bm->stackSize >= BM_STACK_CAPACITY) {
                 return ERR_STACK_OVERFLOW;
@@ -237,37 +244,119 @@ void bmLoadProgramFromMemory(Bm *bm, Inst *program, size_t programSize) {
     bm->programSize = programSize;
 }
 
+void bmLoadProgramFromFile(Bm *bm, const char *filePath) {
+    FILE *f = fopen(filePath, "rb");
+    if (f == NULL) {
+        fprintf(stderr, "ERROR: Could not open file `%s`: %s\n", filePath, strerror(errno));
+        exit(1);
+    }
+
+    if (fseek(f, 0, SEEK_END) < 0) {
+        fprintf(stderr, "ERROR: Could not read file `%s`: %s\n", filePath, strerror(errno));
+        exit(1);
+    }
+    
+    long m = ftell(f);
+    if (m < 0) {
+        fprintf(stderr, "ERROR: Could not read file `%s`: %s\n", filePath, strerror(errno));
+        exit(1);
+    }
+
+    assert(m % sizeof(bm->program[0]) == 0);
+    assert((size_t)m <= BM_PROGRAM_CAPACITY * sizeof(bm->program[0]));
+
+    if (fseek(f, 0, SEEK_SET) < 0) {
+        fprintf(stderr, "ERROR: Could not read file `%s`: %s\n", filePath, strerror(errno));
+        exit(1);
+    }
+
+    bm->programSize = fread(bm->program, sizeof(bm->program[0]), m / sizeof(bm->program[0]), f);
+    
+    if (ferror(f)) {
+        fprintf(stderr, "ERROR: Could not read file `%s`: %s\n", filePath, strerror(errno));
+        exit(1);
+    }
+
+    fclose(f);
+}
+
 void bmSaveProgramToFile(Inst *program, size_t programSize, const char *filePath) {
     FILE *f = fopen(filePath, "wb");
     if (f == NULL) {
         fprintf(stderr, "ERROR: Could not open file `%s`: %s\n", filePath, strerror(errno));
+        exit(1);
     }
 
     fwrite(program, sizeof(program[0]), programSize, f);
 
     if (ferror(f)) {
         fprintf(stderr, "ERROR: Could no write to file `%s`: %s\n", filePath, strerror(errno));
+        exit(1);
     }
 
     fclose(f);
 }
 
 Bm bm = {0};
-Inst program[] = {
-    MAKE_INST_PUSH(0),
-    MAKE_INST_PUSH(1),
-    MAKE_INST_DUP(1),
-    MAKE_INST_DUP(1),
-    MAKE_INST_PLUS,
-    MAKE_INST_JMP(2),
-};
+char *sourceCode =
+    "push 0\n"
+    "push 1\n"
+    "dup 1\n"
+    "dup 1\n"
+    "plus\n"
+    "jmp 2\n";
+
+char *trimLeft(char *str, size_t strSize) {
+    for (size_t i = 0; i < strSize; i++) {
+        if (!isspace(str[i])) {
+            return str + i;
+        }
+    }
+
+    return str + strSize;
+}
+
+Inst bmTranslateLine(char *line, size_t lineSize) {
+    char *end = trimLeft(line, lineSize);
+    lineSize -= end - line;
+    line = end;
+
+    if (lineSize == 0) {
+        fprintf(stderr, "Could not translate empty line to instruction\n");
+        exit(1);
+    }
+
+    return (Inst) {0};
+}
+
+size_t bmTranslateSource(char *source, size_t sourceSize, Inst *program, size_t programCapacity) {
+    while (sourceSize > 0) {
+        char *end = memchr(source, '\n', sourceSize);
+        size_t n = end != NULL ? (size_t) (end - source) : sourceSize;
+
+        printf("#%.*s#\n", (int) n, source);
+
+        source = end;
+        sourceSize -= n;
+
+        if (source != NULL) {
+            source += 1;
+            sourceSize -= 1;
+        }
+    }
+
+    return 0;
+}
 
 int main() {
-    bmSaveProgramToFile(program, ARRAY_SIZE(program), "fib.bm");
+    bm.programSize = bmTranslateSource(sourceCode, strlen(sourceCode), bm.program, BM_PROGRAM_CAPACITY);
+
+    return 0;
 }
 
 int main2() {
-    bmLoadProgramFromMemory(&bm, program, ARRAY_SIZE(program));
+    // bmLoadProgramFromMemory(&bm, program, ARRAY_SIZE(program));
+    bmLoadProgramFromFile(&bm, "fib.bm");
     bmDumpStack(stdout, &bm);
 
     for (int i = 0; i < BM_EXECUTION_LIMIT && !bm.halt; ++i) {
