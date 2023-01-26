@@ -10,11 +10,9 @@
 #include <errno.h>
 #include <ctype.h>
 
+#define ARRAY_SIZE(xs) (sizeof(xs) / sizeof((xs)[0]))
 #define BM_STACK_CAPACITY 1024
 #define BM_PROGRAM_CAPACITY 1024
-#define BM_EXECUTION_LIMIT 100
-
-#define ARRAY_SIZE(xs) (sizeof(xs) / sizeof((xs)[0]))
 
 typedef int64_t Word;
 
@@ -77,11 +75,12 @@ typedef struct {
 #define MAKE_INST_PRINT_DEBUG {.type = INST_PRINT_DEBUG}
 
 Err bmExecuteInst(Bm *bm);
+Err bmExecuteProgram(Bm *bm, int limit);
 void bmDumpStack(FILE *stream, const Bm *bm);
 
 void bmLoadProgramFromMemory(Bm *bm, Inst *program, size_t programSize);
 void bmLoadProgramFromFile(Bm *bm, const char *filePath);
-void bmSaveProgramToFile(Inst *program, size_t programSize, const char *filePath);
+void bmSaveProgramToFile(Bm *bm, const char *filePath);
 
 typedef struct {
     size_t count;
@@ -264,6 +263,21 @@ Err bmExecuteInst(Bm *bm) {
     return ERR_OK;
 }
 
+Err bmExecuteProgram(Bm *bm, int limit) {
+    while (limit != 0 && !bm->halt) {
+        Err err = bmExecuteInst(bm);
+        if (err != ERR_OK) {
+            return err;
+        }
+
+        if (limit > 0) {
+            --limit;
+        }
+    }
+
+    return ERR_OK;
+}
+
 void bmDumpStack(FILE *stream, const Bm *bm) {
     fprintf(stream, "Stack:\n");
     if (bm->stackSize > 0) {
@@ -317,14 +331,14 @@ void bmLoadProgramFromFile(Bm *bm, const char *filePath) {
     fclose(f);
 }
 
-void bmSaveProgramToFile(Inst *program, size_t programSize, const char *filePath) {
+void bmSaveProgramToFile(Bm *bm, const char *filePath) {
     FILE *f = fopen(filePath, "wb");
     if (f == NULL) {
         fprintf(stderr, "ERROR: Could not open file `%s`: %s\n", filePath, strerror(errno));
         exit(1);
     }
 
-    fwrite(program, sizeof(program[0]), programSize, f);
+    fwrite(bm->program, sizeof(bm->program[0]), bm->programSize, f);
 
     if (ferror(f)) {
         fprintf(stderr, "ERROR: Could no write to file `%s`: %s\n", filePath, strerror(errno));

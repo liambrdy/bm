@@ -1,5 +1,6 @@
 *.bm
-bmi
-ebasm
+bme
+basm
+debasm
 
 /.vscode
