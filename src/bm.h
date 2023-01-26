@@ -1,3 +1,6 @@
+#ifndef BM_H
+#define BM_H
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -11,6 +14,8 @@
 #define BM_PROGRAM_CAPACITY 1024
 #define BM_EXECUTION_LIMIT 100
 
+#define ARRAY_SIZE(xs) (sizeof(xs) / sizeof((xs)[0]))
+
 typedef int64_t Word;
 
 typedef enum {
@@ -23,18 +28,7 @@ typedef enum {
     ERR_ILLEGAL_INST_ACCESS,
 } Err;
 
-const char *errAsCStr(Err trap) {
-    switch (trap) {
-        case ERR_OK: return "ERR_OK";
-        case ERR_STACK_OVERFLOW: return "ERR_STACK_OVERFLOW";
-        case ERR_STACK_UNDERFLOW: return "ERR_STACK_UNDERFLOW";
-        case ERR_ILLEGAL_INST: return "ERR_ILLEGAL_INST";
-        case ERR_ILLEGAL_OPERAND: return "ERR_ILLEGAL_OPERAND";
-        case ERR_DIV_BY_ZERO: return "ERR_DIV_BY_ZERO";
-        case ERR_ILLEGAL_INST_ACCESS: return "ERR_ILLEGAL_INST_ACCESS";
-        default: assert(0 && "errAsCStr: Unreachable");
-    }
-}
+const char *errAsCStr(Err trap);
 
 typedef enum {
     INST_NOP = 0,
@@ -51,23 +45,7 @@ typedef enum {
     INST_PRINT_DEBUG,
 } InstType;
 
-const char *instTypeAsCStr(InstType type) {
-    switch (type) {
-        case INST_NOP: return "INST_NOP";
-        case INST_PUSH: return "INST_PUSH";
-        case INST_DUP: return "INST_DUP";
-        case INST_PLUS: return "INST_PLUS";
-        case INST_MINUS: return "INST_MINUS";
-        case INST_MULT: return "INST_MULT";
-        case INST_DIV: return "INST_DIV";
-        case INST_JMP: return "INST_JMP";
-        case INST_JMP_IF: return "INST_JMP_IF";
-        case INST_EQ: return "INST_EQ";
-        case INST_HALT: return "INST_HALT";
-        case INST_PRINT_DEBUG: return "INST_PRINT_DEBUG";
-        default: assert(0 && "instTypeAsCStr: Unreachable");
-    }
-}
+const char *instTypeAsCStr(InstType type);
 
 typedef struct {
     InstType type;
@@ -97,6 +75,66 @@ typedef struct {
 #define MAKE_INST_EQ {.type = INST_EQ}
 #define MAKE_INST_HALT {.type = INST_HALT}
 #define MAKE_INST_PRINT_DEBUG {.type = INST_PRINT_DEBUG}
+
+Err bmExecuteInst(Bm *bm);
+void bmDumpStack(FILE *stream, const Bm *bm);
+
+void bmLoadProgramFromMemory(Bm *bm, Inst *program, size_t programSize);
+void bmLoadProgramFromFile(Bm *bm, const char *filePath);
+void bmSaveProgramToFile(Inst *program, size_t programSize, const char *filePath);
+
+typedef struct {
+    size_t count;
+    const char *data;
+} StringView;
+
+StringView cStrAsSV(const char *cstr);
+StringView svTrimLeft(StringView sv);
+StringView svTrimRight(StringView sv);
+StringView svTrim(StringView sv);
+StringView svChopByDelim(StringView *sv, char delim);
+int svEq(StringView a, StringView b);
+int svToInt(StringView sv);
+
+Inst bmTranslateLine(StringView line);
+size_t bmTranslateSource(StringView source, Inst *program, size_t programCapacity);
+
+StringView slurpFile(const char *filePath);
+
+#endif
+
+#ifdef BM_IMPLEMENTATION
+
+const char *errAsCStr(Err trap) {
+    switch (trap) {
+        case ERR_OK: return "ERR_OK";
+        case ERR_STACK_OVERFLOW: return "ERR_STACK_OVERFLOW";
+        case ERR_STACK_UNDERFLOW: return "ERR_STACK_UNDERFLOW";
+        case ERR_ILLEGAL_INST: return "ERR_ILLEGAL_INST";
+        case ERR_ILLEGAL_OPERAND: return "ERR_ILLEGAL_OPERAND";
+        case ERR_DIV_BY_ZERO: return "ERR_DIV_BY_ZERO";
+        case ERR_ILLEGAL_INST_ACCESS: return "ERR_ILLEGAL_INST_ACCESS";
+        default: assert(0 && "errAsCStr: Unreachable");
+    }
+}
+
+const char *instTypeAsCStr(InstType type) {
+    switch (type) {
+        case INST_NOP: return "INST_NOP";
+        case INST_PUSH: return "INST_PUSH";
+        case INST_DUP: return "INST_DUP";
+        case INST_PLUS: return "INST_PLUS";
+        case INST_MINUS: return "INST_MINUS";
+        case INST_MULT: return "INST_MULT";
+        case INST_DIV: return "INST_DIV";
+        case INST_JMP: return "INST_JMP";
+        case INST_JMP_IF: return "INST_JMP_IF";
+        case INST_EQ: return "INST_EQ";
+        case INST_HALT: return "INST_HALT";
+        case INST_PRINT_DEBUG: return "INST_PRINT_DEBUG";
+        default: assert(0 && "instTypeAsCStr: Unreachable");
+    }
+}
 
 Err bmExecuteInst(Bm *bm) {
     if (bm->ip < 0 || bm->ip >= bm->programSize) {
@@ -237,8 +275,6 @@ void bmDumpStack(FILE *stream, const Bm *bm) {
     }
 }
 
-#define ARRAY_SIZE(xs) (sizeof(xs) / sizeof((xs)[0]))
-
 void bmLoadProgramFromMemory(Bm *bm, Inst *program, size_t programSize) {
     assert(programSize < BM_PROGRAM_CAPACITY);
     memcpy(bm->program, program, sizeof(program[0]) * programSize);
@@ -297,13 +333,6 @@ void bmSaveProgramToFile(Inst *program, size_t programSize, const char *filePath
 
     fclose(f);
 }
-
-Bm bm = {0};
-
-typedef struct {
-    size_t count;
-    const char *data;
-} StringView;
 
 StringView cStrAsSV(const char *cstr) {
     return (StringView) {
@@ -459,3 +488,5 @@ StringView slurpFile(const char *filePath) {
         .data = buffer
     };
 }
+
+#endif
