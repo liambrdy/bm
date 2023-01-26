@@ -5,6 +5,7 @@
 #include <memory.h>
 #include <string.h>
 #include <errno.h>
+#include <ctype.h>
 
 #define BM_STACK_CAPACITY 1024
 #define BM_PROGRAM_CAPACITY 1024
@@ -298,76 +299,163 @@ void bmSaveProgramToFile(Inst *program, size_t programSize, const char *filePath
 }
 
 Bm bm = {0};
-char *sourceCode =
-    "push 0\n"
-    "push 1\n"
-    "dup 1\n"
-    "dup 1\n"
-    "plus\n"
-    "jmp 2\n";
 
-char *trimLeft(char *str, size_t strSize) {
-    for (size_t i = 0; i < strSize; i++) {
-        if (!isspace(str[i])) {
-            return str + i;
+typedef struct {
+    size_t count;
+    const char *data;
+} StringView;
+
+StringView cStrAsSV(const char *cstr) {
+    return (StringView) {
+        .count = strlen(cstr),
+        .data = cstr
+    };
+}
+
+StringView svTrimLeft(StringView sv) {
+    size_t i = 0;
+    while (i < sv.count && isspace(sv.data[i])) {
+        i += 1;
+    }
+
+    return (StringView) {
+        .count = sv.count - i,
+        .data = sv.data + i
+    };
+}
+
+StringView svTrimRight(StringView sv) {
+    size_t i = 0;
+    while (i < sv.count && isspace(sv.data[sv.count - 1 - i])) {
+        i += 1;
+    }
+
+    return (StringView) {
+        .count = sv.count - i,
+        .data = sv.data
+    };
+}
+
+StringView svTrim(StringView sv) {
+    return svTrimRight(svTrimLeft(sv));
+}
+
+StringView svChopByDelim(StringView *sv, char delim) {
+    size_t i = 0;
+    while (i < sv->count && sv->data[i] != delim) {
+        i += 1;
+    }
+
+    StringView result = {
+        .count = i,
+        .data = sv->data
+    };
+
+    if (i < sv->count) {
+        sv->count -= i + 1;
+        sv->data += i + 1;
+    } else {
+        sv->count -= i;
+        sv->data += i;
+    }
+
+    return result;
+}
+
+int svEq(StringView a, StringView b) {
+    if (a.count != b.count) {
+        return 0;
+    } else {
+        return memcmp(a.data, b.data, a.count) == 0;
+    }
+}
+
+int svToInt(StringView sv) {
+    int result = 0;
+
+    for (size_t i = 0; i < sv.count && isdigit(sv.data[i]); i++) {
+        result = result * 10 + sv.data[i] - '0';
+    }
+
+    return result;
+}
+
+Inst bmTranslateLine(StringView line) {
+    line = svTrimLeft(line);
+    StringView instName = svChopByDelim(&line, ' ');
+
+    if (svEq(instName, cStrAsSV("push"))) {
+        line = svTrimLeft(line);
+        int operand = svToInt(svTrimRight(line));
+        return (Inst) { .type = INST_PUSH, .operand = operand };
+    } else if (svEq(instName, cStrAsSV("dup"))) {
+        line = svTrimLeft(line);
+        int operand = svToInt(svTrimRight(line));
+        return (Inst) { .type = INST_DUP, .operand = operand };
+    } else if (svEq(instName, cStrAsSV("plus"))) {
+        return (Inst) { .type = INST_PLUS };
+    } else if (svEq(instName, cStrAsSV("jmp"))) {
+        line = svTrimLeft(line);
+        int operand = svToInt(svTrimRight(line));
+        return (Inst) { .type = INST_JMP, .operand = operand };
+    } else {
+        fprintf(stderr, "ERROR unknown instruction `%.*s`\n", (int) instName.count, instName.data);
+        exit(1);
+    }
+}
+
+size_t bmTranslateSource(StringView source, Inst *program, size_t programCapacity) {
+    size_t programSize = 0;
+    while (source.count > 0) {
+        assert(programSize < programCapacity);
+        StringView line = svTrim(svChopByDelim(&source, '\n'));
+        if (line.count > 0) {
+            program[programSize++] = bmTranslateLine(line);
         }
     }
 
-    return str + strSize;
+    return programSize;
 }
 
-Inst bmTranslateLine(char *line, size_t lineSize) {
-    char *end = trimLeft(line, lineSize);
-    lineSize -= end - line;
-    line = end;
-
-    if (lineSize == 0) {
-        fprintf(stderr, "Could not translate empty line to instruction\n");
+StringView slurpFile(const char *filePath) {
+    FILE *f = fopen(filePath, "r");
+    if (f == NULL) {
+        fprintf(stderr, "ERROR: Could not open file `%s`: %s\n", filePath, strerror(errno));
         exit(1);
     }
 
-    return (Inst) {0};
-}
-
-size_t bmTranslateSource(char *source, size_t sourceSize, Inst *program, size_t programCapacity) {
-    while (sourceSize > 0) {
-        char *end = memchr(source, '\n', sourceSize);
-        size_t n = end != NULL ? (size_t) (end - source) : sourceSize;
-
-        printf("#%.*s#\n", (int) n, source);
-
-        source = end;
-        sourceSize -= n;
-
-        if (source != NULL) {
-            source += 1;
-            sourceSize -= 1;
-        }
-    }
-
-    return 0;
-}
-
-int main() {
-    bm.programSize = bmTranslateSource(sourceCode, strlen(sourceCode), bm.program, BM_PROGRAM_CAPACITY);
-
-    return 0;
-}
-
-int main2() {
-    // bmLoadProgramFromMemory(&bm, program, ARRAY_SIZE(program));
-    bmLoadProgramFromFile(&bm, "fib.bm");
-    bmDumpStack(stdout, &bm);
-
-    for (int i = 0; i < BM_EXECUTION_LIMIT && !bm.halt; ++i) {
-        Err trap = bmExecuteInst(&bm);
-        if (trap != ERR_OK) {
-            fprintf(stderr, "Error: %s\n", errAsCStr(trap));
-            exit(1);
-        }
+    if (fseek(f, 0, SEEK_END) < 0) {
+        fprintf(stderr, "ERROR: Could not read file `%s`: %s\n", filePath, strerror(errno));
+        exit(1);
     }
     
-    bmDumpStack(stdout, &bm);
+    long m = ftell(f);
+    if (m < 0) {
+        fprintf(stderr, "ERROR: Could not read file `%s`: %s\n", filePath, strerror(errno));
+        exit(1);
+    }
 
-    return 0;
+    char *buffer = malloc(m);
+    if (buffer == NULL) {
+        fprintf(stderr, "ERROR: Could not allocate memory for file: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    if (fseek(f, 0, SEEK_SET) < 0) {
+        fprintf(stderr, "ERROR: Could not read file `%s`: %s\n", filePath, strerror(errno));
+        exit(1);
+    }
+
+    size_t n = fread(buffer, 1, m, f);
+    if (ferror(f)) {
+        fprintf(stderr, "ERROR: Could not read file `%s`: %s\n", filePath, strerror(errno));
+        exit(1);
+    }
+
+    fclose(f);
+
+    return (StringView) {
+        .count = n,
+        .data = buffer
+    };
 }
