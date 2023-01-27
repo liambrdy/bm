@@ -426,21 +426,19 @@ int svToInt(StringView sv) {
 Inst bmTranslateLine(StringView line) {
     line = svTrimLeft(line);
     StringView instName = svChopByDelim(&line, ' ');
+    StringView operand = svTrim(svChopByDelim(&line, '#'));
 
     if (svEq(instName, cStrAsSV("push"))) {
         line = svTrimLeft(line);
-        int operand = svToInt(svTrimRight(line));
-        return (Inst) { .type = INST_PUSH, .operand = operand };
+        return (Inst) { .type = INST_PUSH, .operand = svToInt(operand) };
     } else if (svEq(instName, cStrAsSV("dup"))) {
         line = svTrimLeft(line);
-        int operand = svToInt(svTrimRight(line));
-        return (Inst) { .type = INST_DUP, .operand = operand };
+        return (Inst) { .type = INST_DUP, .operand = svToInt(operand) };
     } else if (svEq(instName, cStrAsSV("plus"))) {
         return (Inst) { .type = INST_PLUS };
     } else if (svEq(instName, cStrAsSV("jmp"))) {
         line = svTrimLeft(line);
-        int operand = svToInt(svTrimRight(line));
-        return (Inst) { .type = INST_JMP, .operand = operand };
+        return (Inst) { .type = INST_JMP, .operand = svToInt(operand) };
     } else {
         fprintf(stderr, "ERROR unknown instruction `%.*s`\n", (int) instName.count, instName.data);
         exit(1);
@@ -452,7 +450,7 @@ size_t bmTranslateSource(StringView source, Inst *program, size_t programCapacit
     while (source.count > 0) {
         assert(programSize < programCapacity);
         StringView line = svTrim(svChopByDelim(&source, '\n'));
-        if (line.count > 0) {
+        if (line.count > 0 && *line.data != '#') {
             program[programSize++] = bmTranslateLine(line);
         }
     }
