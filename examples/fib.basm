@@ -1,8 +1,7 @@
-# Top Comment
     push 0
-    push 1      # Middle comment
+    push 1
+loop:
     dup 1
-# Middle Comment
     dup 1
     plus
-    jmp 2
+    jmp loop
